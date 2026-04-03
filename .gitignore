@@ -3,6 +3,18 @@ dist/
 target/
 .env
 *.db
+*.db-wal
+*.db-shm
 contracts.env
 coverage/
 .omx/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store

@@ -74,8 +74,11 @@ export function createPayAndExecuteStage(options: PayAndExecuteStageOptions): Pi
         previousResult = result.data;
       }
 
-      // Release remaining budget
-      await options.middleware.releaseRemainder(sessionId, options.middleware.coordinatorAddress);
+      // Close session and transfer unspent USDC remainder back to coordinator
+      const remainderTxHash = await options.middleware.transferRemainder(
+        sessionId,
+        options.middleware.coordinatorAddress,
+      );
 
       return {
         status: 'completed',
@@ -84,6 +87,7 @@ export function createPayAndExecuteStage(options: PayAndExecuteStageOptions): Pi
           finalResult: previousResult,
           sessionId,
           lockTxHash,
+          remainderTxHash,
           totalPayments: callResults.filter((r) => r.txHash).length,
         },
         duration_ms: Date.now() - startTime,

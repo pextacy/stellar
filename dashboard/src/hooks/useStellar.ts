@@ -4,9 +4,11 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import * as StellarSdk from '@stellar/stellar-sdk';
 
 const HORIZON_URL = import.meta.env.VITE_HORIZON_URL || 'https://horizon-testnet.stellar.org';
 const REGISTRY_URL = import.meta.env.VITE_REGISTRY_URL || 'http://localhost:3001';
+const SOROBAN_RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 
 export interface Transaction {
   id: string;
@@ -122,4 +124,132 @@ export function useAgents() {
   useEffect(() => { fetch_(); }, [fetch_]);
 
   return { agents, loading, error, refetch: fetch_ };
+}
+
+// ---------------------------------------------------------------------------
+// Soroban contract reads
+// ---------------------------------------------------------------------------
+
+export interface SessionLedger {
+  sessionId: string;
+  budget: number;
+  spent: number;
+  active: boolean;
+  entries: Array<{
+    agent: string;
+    amount: number;
+    txHash: string;
+    timestamp: number;
+  }>;
+}
+
+async function simulateContractCall(
+  contractId: string,
+  coordinatorAddress: string,
+  method: string,
+  args: StellarSdk.xdr.ScVal[],
+): Promise<unknown> {
+  const server = new StellarSdk.rpc.Server(SOROBAN_RPC_URL);
+  const account = await server.getAccount(coordinatorAddress);
+  const contract = new StellarSdk.Contract(contractId);
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase: StellarSdk.Networks.TESTNET,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const result = await server.simulateTransaction(tx);
+  if ('error' in result) throw new Error(`Contract error: ${result.error}`);
+  if (!('result' in result) || !result.result) return undefined;
+  return StellarSdk.scValToNative(result.result.retval);
+}
+
+export function useSessionLedger(
+  sessionId: string | undefined,
+  coordinatorAddress: string | undefined,
+) {
+  const contractId = import.meta.env.VITE_SPENDING_POLICY_CONTRACT_ID as string | undefined;
+  const [ledger, setLedger] = useState<SessionLedger | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetch_ = useCallback(async () => {
+    if (!sessionId || !contractId || !coordinatorAddress) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const raw = await simulateContractCall(
+        contractId,
+        coordinatorAddress,
+        'get_session_ledger',
+        [StellarSdk.nativeToScVal(sessionId, { type: 'symbol' })],
+      ) as {
+        budget: bigint;
+        spent: bigint;
+        active: boolean;
+        entries: Array<{ agent: string; amount: bigint; tx_hash: Uint8Array; timestamp: bigint }>;
+      };
+
+      setLedger({
+        sessionId,
+        budget: Number(raw.budget) / 10_000_000,
+        spent: Number(raw.spent) / 10_000_000,
+        active: raw.active,
+        entries: (raw.entries ?? []).map((e) => ({
+          agent: e.agent,
+          amount: Number(e.amount) / 10_000_000,
+          txHash: Buffer.from(e.tx_hash).toString('hex'),
+          timestamp: Number(e.timestamp),
+        })),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId, contractId, coordinatorAddress]);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  return { ledger, loading, error, refetch: fetch_ };
+}
+
+export function useAgentScores(
+  agentAddresses: string[],
+  coordinatorAddress: string | undefined,
+): Record<string, number> {
+  const contractId = import.meta.env.VITE_REPUTATION_CONTRACT_ID as string | undefined;
+  const [scores, setScores] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!contractId || !coordinatorAddress || agentAddresses.length === 0) return;
+    let cancelled = false;
+
+    Promise.allSettled(
+      agentAddresses.map(async (addr) => {
+        const raw = await simulateContractCall(
+          contractId,
+          coordinatorAddress,
+          'get_score',
+          [StellarSdk.nativeToScVal(addr, { type: 'address' })],
+        ) as bigint;
+        return { addr, score: Number(raw) / 100 };
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, number> = {};
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          map[r.value.addr] = r.value.score;
+        }
+      }
+      setScores(map);
+    });
+
+    return () => { cancelled = true; };
+  }, [agentAddresses.join(','), contractId, coordinatorAddress]);
+
+  return scores;
 }

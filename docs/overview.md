@@ -117,3 +117,4 @@ No mock data. No gradients. All data comes from live Stellar testnet state.
 - **Native USDC** — no bridging, no wrapping, real stablecoin settlement
 - **Soroban** — programmable spending policy without a trusted intermediary
 - **Stellar SDK** — first-class x402 support via `@stellar/x402` package
+

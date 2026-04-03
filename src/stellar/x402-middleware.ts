@@ -154,8 +154,40 @@ export class X402Middleware {
     return this.spendingPolicy.lockBudget(amount, sessionId);
   }
 
-  async releaseRemainder(sessionId: string, recipient: string): Promise<void> {
-    return this.spendingPolicy.releaseRemainder(sessionId, recipient);
+  /**
+   * Close a session and transfer the unspent USDC remainder back to the recipient.
+   *
+   * Steps:
+   * 1. Read the session ledger to calculate remainder = budget - spent.
+   * 2. Mark the session inactive on-chain via releaseRemainder (emits event).
+   * 3. If remainder > 0, send an actual USDC payment to the recipient.
+   *
+   * Returns the tx hash of the USDC transfer, or undefined if remainder is zero.
+   */
+  async transferRemainder(sessionId: string, recipientAddress: string): Promise<string | undefined> {
+    const session = await this.spendingPolicy.getSessionLedger(sessionId);
+
+    const budgetRaw = BigInt(Math.round(parseFloat(String((session as unknown as { budget: bigint }).budget))));
+    const spentRaw = BigInt(Math.round(parseFloat(String((session as unknown as { spent: bigint }).spent))));
+    const remainderRaw = budgetRaw - spentRaw;
+
+    // Mark session closed on-chain
+    await this.spendingPolicy.releaseRemainder(sessionId, recipientAddress);
+
+    if (remainderRaw <= 0n) {
+      return undefined;
+    }
+
+    // Convert from stroops (7 decimal places) to USDC string
+    const remainderUsdc = (Number(remainderRaw) / 10_000_000).toFixed(7);
+
+    const result = await this.stellarClient.sendPayment({
+      destination: recipientAddress,
+      amount: remainderUsdc,
+      memo: `remainder-${sessionId}`,
+    });
+
+    return result.txHash;
   }
 
   async getSessionLedger(sessionId: string) {

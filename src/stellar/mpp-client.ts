@@ -1,17 +1,14 @@
 /**
- * MPP-based x402 payment client for AgentMesh
+ * MPP-style x402 payment client for AgentMesh
  *
- * Uses @stellar/mpp (Machine Payments Protocol) for production-grade
- * x402 payment handling on Stellar. Replaces the hand-rolled x402.ts
- * with the official Stellar MPP SDK.
- *
- * The Mppx.create() polyfills global fetch so every fetch() call
- * automatically handles 402 → sign → pay → retry.
+ * Wraps X402PaymentClient with automatic 402-handling semantics.
+ * The fetch polyfill pattern intercepts 402 responses, signs a Stellar USDC
+ * payment, and retries — all transparently.
  */
 
 import { Keypair } from '@stellar/stellar-sdk';
-import { Mppx } from 'mppx/client';
-import { stellar } from '@stellar/mpp/charge/client';
+import { StellarClient } from './client.js';
+import { X402PaymentClient } from './x402.js';
 
 export interface MppClientConfig {
   readonly secretKey: string;
@@ -28,24 +25,20 @@ export interface MppCallResult<T = unknown> {
   readonly status: number;
   readonly data: T;
   readonly latencyMs: number;
+  readonly txHash?: string;
 }
 
 export class MppChargeClient {
   private readonly keypair: Keypair;
+  private readonly x402Client: X402PaymentClient;
+  private readonly onProgress?: (event: MppProgressEvent) => void;
 
   constructor(config: MppClientConfig) {
     this.keypair = Keypair.fromSecret(config.secretKey);
+    this.onProgress = config.onProgress;
 
-    // Polyfill global fetch with automatic 402 handling
-    Mppx.create({
-      methods: [
-        stellar.charge({
-          keypair: this.keypair,
-          mode: config.mode ?? 'pull',
-          onProgress: config.onProgress,
-        }),
-      ],
-    });
+    const stellarClient = new StellarClient({ secretKey: config.secretKey });
+    this.x402Client = new X402PaymentClient(stellarClient);
   }
 
   get publicKey(): string {
@@ -53,8 +46,8 @@ export class MppChargeClient {
   }
 
   /**
-   * Call an agent endpoint. If the agent returns 402, Mppx automatically
-   * signs a Stellar payment, sends it, and retries — all transparently.
+   * Call an agent endpoint. If the agent returns 402, automatically
+   * signs a Stellar USDC payment, sends it, and retries.
    */
   async callAgent<T = unknown>(
     url: string,
@@ -62,15 +55,25 @@ export class MppChargeClient {
   ): Promise<MppCallResult<T>> {
     const startTime = Date.now();
 
-    const response = await fetch(url, {
+    this.onProgress?.({ type: 'challenge' });
+
+    const response = await this.x402Client.request<T>({
+      url,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body,
     });
 
-    const data = await response.json() as T;
     const latencyMs = Date.now() - startTime;
 
-    return { status: response.status, data, latencyMs };
+    if (response.txHash) {
+      this.onProgress?.({ type: 'paid', txHash: response.txHash, amount: response.paymentAmount });
+    }
+
+    return {
+      status: response.status,
+      data: response.data,
+      latencyMs,
+      txHash: response.txHash,
+    };
   }
 }

@@ -151,9 +151,10 @@ impl SpendingPolicyContract {
 
         let remainder = session.budget - session.spent;
         if remainder > 0 {
-            // In a real implementation, this would trigger a token transfer.
-            // For the hackathon, the coordinator handles the actual USDC transfer
-            // off-contract after reading the remainder.
+            // Emit a release event so the coordinator can read the remainder
+            // and execute the USDC transfer off-contract via StellarClient.sendPayment.
+            // The contract enforces the session is closed; actual token movement
+            // is the coordinator's responsibility after observing this event.
             env.events().publish(
                 (symbol_short!("release"),),
                 (recipient, remainder),
