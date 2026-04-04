@@ -37,7 +37,7 @@ export function createPayAndExecuteStage(options: PayAndExecuteStageOptions): Pi
         };
       }
 
-      const sessionId = ctx.sessionId ?? `session-${Date.now()}`;
+      const sessionId = ctx.sessionId ?? `mesh-${Date.now()}`;
 
       // Lock budget in Soroban
       const lockTxHash = await options.middleware.lockBudget(options.budgetUsdc, sessionId);
@@ -63,6 +63,8 @@ export function createPayAndExecuteStage(options: PayAndExecuteStageOptions): Pi
         callResults.push(result);
 
         if (!result.success) {
+          // Release locked budget before returning — don't leave USDC stuck in the contract
+          await options.middleware.transferRemainder(sessionId, options.middleware.coordinatorAddress).catch(() => {});
           return {
             status: 'failed',
             artifacts: { callResults, sessionId, lockTxHash },

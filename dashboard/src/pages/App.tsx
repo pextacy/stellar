@@ -32,8 +32,16 @@ export function App() {
     ? ledger.spent
     : payments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
 
+  const [addrError, setAddrError] = useState('');
+
   function handleLoad() {
-    setCoordinatorAddress(addrInput.trim());
+    const addr = addrInput.trim();
+    if (addr && (addr.length !== 56 || !addr.startsWith('G'))) {
+      setAddrError('Invalid Stellar address — must start with G and be 56 characters');
+      return;
+    }
+    setAddrError('');
+    setCoordinatorAddress(addr);
     if (sessionInput.trim()) setSessionId(sessionInput.trim());
   }
 
@@ -78,6 +86,16 @@ export function App() {
             )}
           </div>
 
+          {addrError && (
+            <div className="rounded-lg border border-red-800 bg-red-950 px-4 py-2 text-red-300 text-sm font-mono">
+              {addrError}
+            </div>
+          )}
+          {!import.meta.env.VITE_SPENDING_POLICY_CONTRACT_ID && (
+            <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-zinc-500 text-xs font-mono">
+              VITE_SPENDING_POLICY_CONTRACT_ID not set — session ledger unavailable
+            </div>
+          )}
           {ledgerError && (
             <div className="rounded-lg border border-amber-800 bg-amber-950 px-4 py-2 text-amber-300 text-sm font-mono">
               Soroban: {ledgerError}

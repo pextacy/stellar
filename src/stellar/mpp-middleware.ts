@@ -95,7 +95,17 @@ export class MppMiddleware {
         previousResult: ctx.previousResult,
       });
 
-      // 3. Fire-and-forget reputation update
+      // 3. Record spend in Soroban if payment was made
+      if (result.txHash) {
+        await this.spendingPolicy.recordSpend(
+          ctx.sessionId,
+          ctx.agentStellarAddress,
+          ctx.agentPriceUsdc,
+          result.txHash,
+        );
+      }
+
+      // 4. Fire-and-forget reputation update
       this.reputationRegistry
         .record(ctx.agentStellarAddress, result.latencyMs, result.status === 200)
         .catch(() => {});

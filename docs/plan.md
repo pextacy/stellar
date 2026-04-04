@@ -6,157 +6,193 @@ _Last updated: 2026-04-04_
 
 ## Code Status — All Green
 
-| Component | Status |
-|-----------|--------|
-| Soroban SpendingPolicy contract | ✅ Full + 5 tests |
-| Soroban ReputationRegistry contract | ✅ Full + 4 tests |
-| StellarClient, X402PaymentClient | ✅ Real Stellar SDK, no mocks |
-| SpendingPolicyClient, ReputationRegistryClient | ✅ All contract methods |
-| X402Middleware + transferRemainder | ✅ Reads ledger → sends actual USDC back |
-| MppChargeClient, MppMiddleware, createMppPaywall | ✅ Compiles clean (broken @stellar/mpp import fixed) |
-| data-agent | ✅ Real Horizon calls: latest ledger + USDC asset + fee stats |
-| compute-agent | ✅ Real analysis from data-agent output |
-| action-agent | ✅ Real markdown report with metrics and timestamp |
-| x402_middleware.py | ✅ On-chain payment verification |
-| Registry server | ✅ SQLite, full CRUD |
-| Pipeline: discover + pay-and-execute | ✅ transferRemainder wired in |
-| `omx mesh` CLI | ✅ run / agents / status |
-| Dashboard hooks: usePayments, useAgents | ✅ Live Horizon + registry |
-| Dashboard hooks: useSessionLedger, useAgentScores | ✅ Live Soroban RPC reads |
-| Dashboard: BudgetGauge, SpendTable, ReputationBoard | ✅ All live data, no gradients, no mocks |
-| Dashboard App: session ID input + live budget | ✅ No hardcoded values |
-| Scripts: deploy, fund-wallets (with USDC trustlines), register, demo | ✅ |
-| Root TypeScript — `tsc --noEmit` | ✅ Zero errors |
-| Dashboard TypeScript — `tsc --noEmit` | ✅ Zero errors |
+| Component | Status | Tests |
+|-----------|--------|-------|
+| Soroban SpendingPolicy contract | ✅ Written | 5 unit tests (requires `cargo`) |
+| Soroban ReputationRegistry contract | ✅ Written | 4 unit tests (requires `cargo`) |
+| coordinator-agent | ✅ Full x402 pipeline: discover → pay → call → record | — |
+| data-agent | ✅ Real Horizon calls: latest ledger + USDC asset + fee stats | — |
+| compute-agent | ✅ Real analysis from data-agent output | — |
+| action-agent | ✅ Real markdown report with metrics and timestamp | — |
+| x402_middleware.py | ✅ Startup validation, 10s Horizon timeout, 502 on network error | 15 pytest pass |
+| Registry server | ✅ better-sqlite3 WAL, capability validation, DB error handling | 10/10 node:test pass |
+| Dashboard hooks: usePayments, useAgents | ✅ Live Horizon + registry | — |
+| Dashboard hooks: useSessionLedger, useAgentScores | ✅ Live Soroban RPC reads | — |
+| Dashboard: BudgetGauge, SpendTable, ReputationBoard | ✅ All live data, no gradients, no mocks | — |
+| Dashboard App: address validation, contract ID warning | ✅ | — |
+| Dashboard TypeScript — `tsc --noEmit` | ✅ Zero errors | — |
+
+### Production hardening completed (2026-04-04)
+
+- **coordinator-agent**: implemented from scratch (`coordinator-agent/index.js` + `package.json`)
+  — full x402 flow: probe 402 → send USDC → retry with `X-Payment` header
+  — Soroban: `lock_budget`, `can_spend`, `record_spend`, `release_remainder`, `record` (all optional if contract IDs unset)
+  — exits on missing/invalid `COORDINATOR_SECRET`
+- **x402_middleware.py**: `_validate_startup()` called from `X402Middleware.__init__()` — agents fail fast with clear error; Horizon calls now have a 10s timeout; network errors → 502, bad payment → 402
+- **registry/server.js**: capability query param validated (`/^[a-zA-Z0-9_-]{1,64}$/`); `insertAgent.run()` wrapped in try/catch
+- **dashboard/App.tsx**: Stellar address format check (56 chars, starts with G) before `handleLoad()`; notice banner when `VITE_SPENDING_POLICY_CONTRACT_ID` is missing
+- **Python agents**: `Optional[str]` import for Python 3.9 compatibility; `_validate_startup()` called in `__main__`
 
 ---
 
 ## What To Do Now (ordered)
 
-### 1. Write README.md — REQUIRED for submission
+### 1. Install Stellar CLI + Rust toolchain
 
-No root `README.md` exists. Judges need this to run the demo. Must cover:
-- What AgentMesh is (2 sentences)
-- Architecture diagram
-- Prerequisites (Node 20, Python 3.11, Stellar CLI, Rust/cargo)
-- Step-by-step quickstart: generate keys → fund wallets → deploy contracts → start services → run task → open dashboard
-- Demo script (what to show judges)
-- Link to testnet explorer
+Required only for Soroban contract deployment. Skip if already installed.
 
-File: `README.md` at repo root.
+```bash
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup target add wasm32-unknown-unknown
+
+# Stellar CLI
+cargo install --locked stellar-cli --features opt
+```
 
 ---
 
-### 2. Deploy Soroban contracts to testnet — REQUIRED for live demo
-
-Contracts are written and tested but not deployed. Without deployed contract IDs the coordinator cannot run in non-local mode.
+### 2. Generate keypairs
 
 ```bash
-# Install Stellar CLI if not present
-# https://developers.stellar.org/docs/tools/developer-tools/cli/install-and-setup
+node --input-type=module --eval "
+import * as StellarSdk from '@stellar/stellar-sdk';
+for (const name of ['coordinator', 'data', 'compute', 'action']) {
+  const k = StellarSdk.Keypair.random();
+  console.log(name + ' SECRET=' + k.secret());
+  console.log(name + ' PUBLIC=' + k.publicKey());
+  console.log();
+}
+"
+```
 
-# Generate coordinator keypair
-node -e "const{Keypair}=require('@stellar/stellar-sdk'); const k=Keypair.random(); console.log('SECRET:',k.secret()); console.log('PUBLIC:',k.publicKey())"
+Save the output — you'll use these throughout the remaining steps.
 
-# Fund via Friendbot
-curl "https://friendbot.stellar.org?addr=<COORDINATOR_ADDRESS>"
+---
 
-# Deploy both contracts — writes contracts.env
-export DEPLOYER_SECRET=<COORDINATOR_SECRET>
+### 3. Deploy Soroban contracts to testnet
+
+```bash
+export DEPLOYER_SECRET=<COORDINATOR_SECRET from step 2>
 ./scripts/deploy.sh
+source contracts.env   # exports SPENDING_POLICY_CONTRACT_ID, REPUTATION_CONTRACT_ID
 ```
 
-After deploy: `contracts.env` will contain `SPENDING_POLICY_CONTRACT_ID` and `REPUTATION_CONTRACT_ID`.
-
----
-
-### 3. Fill all .env files
-
-After step 2, fill in:
-
-**`coordinator-agent/.env`** (copy from `.env.example`):
+`contracts.env` is gitignored. After a successful deploy:
 ```
-COORDINATOR_SECRET=<from step 2>
-SPENDING_POLICY_CONTRACT_ID=<from contracts.env>
-REPUTATION_CONTRACT_ID=<from contracts.env>
-```
-
-**`specialist-agents/data-agent/.env`**, `compute-agent/.env`, `action-agent/.env`:
-```
-AGENT_SECRET=<each agent's own secret key>
-```
-
-**`dashboard/.env`** (copy from `.env.example`):
-```
-VITE_SPENDING_POLICY_CONTRACT_ID=<from contracts.env>
-VITE_REPUTATION_CONTRACT_ID=<from contracts.env>
-VITE_COORDINATOR_ADDRESS=<coordinator public key>
+SPENDING_POLICY_CONTRACT_ID=C...
+REPUTATION_CONTRACT_ID=C...
 ```
 
 ---
 
-### 4. Fund wallets + add USDC trustlines + get testnet USDC
+### 4. Fill all .env files
 
 ```bash
-export COORDINATOR_ADDRESS=G...  export COORDINATOR_SECRET=S...
-export DATA_AGENT_ADDRESS=G...   export DATA_AGENT_SECRET=S...
-export COMPUTE_AGENT_ADDRESS=G...  export COMPUTE_AGENT_SECRET=S...
-export ACTION_AGENT_ADDRESS=G...   export ACTION_AGENT_SECRET=S...
+# Coordinator
+cp coordinator-agent/.env.example coordinator-agent/.env
+# Fill in: COORDINATOR_SECRET, SPENDING_POLICY_CONTRACT_ID, REPUTATION_CONTRACT_ID
+
+# Specialist agents
+for agent in data compute action; do
+  cp specialist-agents/${agent}-agent/.env.example specialist-agents/${agent}-agent/.env
+  # Fill in: AGENT_SECRET (use the matching secret from step 2)
+done
+
+# Dashboard
+cp dashboard/.env.example dashboard/.env
+# Fill in: VITE_SPENDING_POLICY_CONTRACT_ID, VITE_REPUTATION_CONTRACT_ID
+```
+
+---
+
+### 5. Fund wallets + add USDC trustlines
+
+```bash
+export COORDINATOR_ADDRESS=G...   COORDINATOR_SECRET=S...
+export DATA_AGENT_ADDRESS=G...    DATA_AGENT_SECRET=S...
+export COMPUTE_AGENT_ADDRESS=G... COMPUTE_AGENT_SECRET=S...
+export ACTION_AGENT_ADDRESS=G...  ACTION_AGENT_SECRET=S...
+
 ./scripts/fund-wallets.sh
 ```
 
-Then add testnet USDC to the coordinator wallet at:
-https://laboratory.stellar.org/#account-creator?network=test
-(Use the "Send" tab, asset USDC, issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`)
+Then top up the coordinator with testnet USDC (needs at least 5 USDC for a full demo run):
+- Stellar Laboratory → Fund → send `USDC` (issuer `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`) to the coordinator address
 
 ---
 
-### 5. Run the demo end-to-end
+### 6. Start all services
 
 ```bash
-# Terminal 1 — start all services
+# Export secrets, then launch everything in one shot:
 export COORDINATOR_SECRET=S...
 export DATA_AGENT_SECRET=S...
 export COMPUTE_AGENT_SECRET=S...
 export ACTION_AGENT_SECRET=S...
+
 ./scripts/demo.sh
-
-# Terminal 2 — run a task
-omx mesh run --task "Research Stellar DeFi protocols and summarize TVL trends" --budget 0.50
-
-# Copy the session ID printed (e.g. mesh-1714000000000)
-# Open dashboard: http://localhost:5173
-# Paste coordinator address + session ID → click Load
 ```
 
-Verify on testnet explorer: every tx hash in SpendTable is clickable and shows a real USDC payment.
+`demo.sh` starts the registry, all three specialist agents, registers them, and opens the dashboard. It also auto-registers agents so you don't need to run `register-agents.sh` separately.
+
+Services after startup:
+| Service | URL |
+|---------|-----|
+| Registry | http://localhost:3001 |
+| Data agent | http://localhost:3010 |
+| Compute agent | http://localhost:3011 |
+| Action agent | http://localhost:3012 |
+| Dashboard | http://localhost:5173 |
+| Coordinator | http://localhost:3000 |
+
+Start the coordinator separately (it is not included in `demo.sh` yet):
+```bash
+cd coordinator-agent && node index.js
+```
 
 ---
 
-## Commands Cheat Sheet
+### 7. Run a task
 
 ```bash
-# TypeScript type checks (already pass)
-node_modules/.bin/tsc --noEmit                          # root
-cd dashboard && node_modules/.bin/tsc --noEmit          # dashboard
+curl -s -X POST http://localhost:3000/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "Research the top 5 Stellar DeFi protocols and summarize TVL trends",
+    "budget_usdc": "0.50"
+  }' | jq .
+```
 
-# Soroban tests (requires cargo / Rust toolchain)
+The response includes a `sessionId` (e.g. `mesh-a1b2c3d4`). Paste the coordinator address and session ID into the dashboard → click Load.
+
+Verify every tx hash in the SpendTable links to a real USDC payment on testnet explorer.
+
+---
+
+### 8. Remaining gaps before submission
+
+- [ ] Add coordinator startup to `demo.sh` (currently started manually)
+- [ ] Add `dashboard/.env.example` with `VITE_COORDINATOR_ADDRESS` (currently undocumented)
+- [ ] Verify `scripts/fund-wallets.sh` trustline node snippet uses ESM (`import`) not CJS (`require`) — the root package is `"type": "module"`
+- [ ] Run Soroban contract tests once `cargo` is installed: `cd soroban-contracts/spending-policy && cargo test`
+- [ ] Smoke-test end-to-end on testnet at least once before submission
+
+---
+
+## Test Commands
+
+```bash
+# Registry (Node built-in test runner)
+cd registry && npm test
+
+# Python middleware + agent logic
+cd specialist-agents && AGENT_SECRET=<any valid secret> python3 -m pytest tests/ -q
+
+# Soroban contracts (requires cargo)
 cd soroban-contracts/spending-policy && cargo test
 cd soroban-contracts/reputation && cargo test
 
-# Deploy contracts
-export DEPLOYER_SECRET=S...
-./scripts/deploy.sh && source contracts.env
-
-# Fund wallets + trustlines
-./scripts/fund-wallets.sh
-
-# Run everything
-./scripts/demo.sh
-
-# Task execution
-omx mesh run --task "Research Stellar DeFi protocols" --budget 0.50
-omx mesh run --task "..." --budget 0.50 --local    # no payments (local test)
-omx mesh agents                                     # list registry
-omx mesh status --session mesh-1234567890           # read Soroban ledger
+# Dashboard TypeScript
+cd dashboard && node_modules/.bin/tsc --noEmit
 ```

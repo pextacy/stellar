@@ -92,11 +92,6 @@ export class StellarClient {
     expectedAmount: string,
     expectedDestination: string,
   ): Promise<boolean> {
-    const tx = await this.server
-      .transactions()
-      .transaction(txHash)
-      .call();
-
     const operations = await this.server
       .operations()
       .forTransaction(txHash)
@@ -110,7 +105,7 @@ export class StellarClient {
         'to' in op &&
         op.to === expectedDestination &&
         'amount' in op &&
-        op.amount === expectedAmount,
+        Math.abs(parseFloat(op.amount as string) - parseFloat(expectedAmount)) < 1e-7,
     );
 
     return paymentOp !== undefined;

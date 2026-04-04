@@ -87,11 +87,16 @@ export class ReputationRegistryClient {
     }
 
     let getResponse = await server.getTransaction(response.hash);
-    while (getResponse.status === 'NOT_FOUND') {
+    let attempts = 0;
+    while (getResponse.status === 'NOT_FOUND' && attempts < 30) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       getResponse = await server.getTransaction(response.hash);
+      attempts++;
     }
 
+    if (getResponse.status === 'NOT_FOUND') {
+      throw new Error(`Contract call ${method} timed out after 30s`);
+    }
     if (getResponse.status === 'FAILED') {
       throw new Error(`Contract call ${method} failed on-chain`);
     }

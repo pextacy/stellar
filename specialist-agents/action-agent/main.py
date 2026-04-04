@@ -7,6 +7,7 @@ x402 middleware applied at the app level.
 import datetime
 import os
 import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -22,7 +23,7 @@ class TaskRequest(BaseModel):
     task: str
     capability: str = "action"
     sessionId: str = ""
-    previousResult: dict | None = None
+    previousResult: Optional[dict] = None
 
 
 class TaskResponse(BaseModel):
@@ -60,6 +61,8 @@ def build_report(task: str, previous: dict) -> str:
 
     if metrics:
         lines.append("## Metrics")
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
         for key, value in metrics.items():
             label = key.replace("_", " ").title()
             lines.append(f"| {label} | {value} |")
@@ -95,6 +98,7 @@ async def execute_task(req: TaskRequest) -> TaskResponse:
 
 if __name__ == "__main__":
     import uvicorn
-
+    from shared.x402_middleware import _validate_startup
+    _validate_startup()
     port = int(os.getenv("PORT", "3012"))
     uvicorn.run(app, host="0.0.0.0", port=port)

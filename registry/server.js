@@ -42,6 +42,15 @@ const getAllAgents = db.prepare(`SELECT * FROM agents ORDER BY registered_at DES
 const app = express();
 app.use(express.json());
 
+// Allow dashboard (any localhost origin) to query the registry
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.sendStatus(200); return; }
+  next();
+});
+
 function formatAgent(row) {
   return {
     id: row.id,
@@ -59,6 +68,10 @@ app.get('/agents', (req, res) => {
   let rows;
 
   if (capability) {
+    // Reject values that could interfere with the LIKE pattern
+    if (typeof capability !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(capability)) {
+      return res.status(400).json({ error: 'Invalid capability format' });
+    }
     // SQLite JSON search — capabilities is stored as JSON array
     const stmt = db.prepare(
       `SELECT * FROM agents WHERE capabilities LIKE ? ORDER BY registered_at DESC`
@@ -93,14 +106,19 @@ app.post('/agents', (req, res) => {
   const id = randomUUID();
   const registeredAt = new Date().toISOString();
 
-  insertAgent.run(
-    id,
-    endpointUrl,
-    JSON.stringify(capabilities),
-    priceUsdc,
-    stellarAddress,
-    registeredAt
-  );
+  try {
+    insertAgent.run(
+      id,
+      endpointUrl,
+      JSON.stringify(capabilities),
+      priceUsdc,
+      stellarAddress,
+      registeredAt
+    );
+  } catch (err) {
+    console.error('[registry] DB insert error:', err);
+    return res.status(500).json({ error: 'Failed to register agent' });
+  }
 
   res.status(201).json(formatAgent({
     id,

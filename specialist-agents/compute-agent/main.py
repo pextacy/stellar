@@ -6,6 +6,7 @@ x402 middleware applied at the app level.
 
 import os
 import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -21,7 +22,7 @@ class TaskRequest(BaseModel):
     task: str
     capability: str = "compute"
     sessionId: str = ""
-    previousResult: dict | None = None
+    previousResult: Optional[dict] = None
 
 
 class TaskResponse(BaseModel):
@@ -107,6 +108,7 @@ async def execute_task(req: TaskRequest) -> TaskResponse:
 
 if __name__ == "__main__":
     import uvicorn
-
+    from shared.x402_middleware import _validate_startup
+    _validate_startup()
     port = int(os.getenv("PORT", "3011"))
     uvicorn.run(app, host="0.0.0.0", port=port)
