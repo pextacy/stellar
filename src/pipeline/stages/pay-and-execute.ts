@@ -37,7 +37,7 @@ export function createPayAndExecuteStage(options: PayAndExecuteStageOptions): Pi
         };
       }
 
-      const sessionId = ctx.sessionId ?? `mesh-${Date.now()}`;
+      const sessionId = ctx.sessionId ?? `mesh_${Date.now()}`;
 
       // Lock budget in Soroban
       const lockTxHash = await options.middleware.lockBudget(options.budgetUsdc, sessionId);

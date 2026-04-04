@@ -24,7 +24,7 @@ stellar contract build
 echo "[deploy] Deploying spending-policy..."
 cd "$CONTRACTS_DIR/spending-policy"
 SPENDING_POLICY_ID=$(stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/spending_policy.wasm \
+  --wasm target/wasm32v1-none/release/spending_policy.wasm \
   --network testnet \
   --source "$DEPLOYER_SECRET")
 
@@ -34,7 +34,7 @@ echo "[deploy] SpendingPolicy deployed: $SPENDING_POLICY_ID"
 echo "[deploy] Deploying reputation..."
 cd "$CONTRACTS_DIR/reputation"
 REPUTATION_ID=$(stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/reputation.wasm \
+  --wasm target/wasm32v1-none/release/reputation.wasm \
   --network testnet \
   --source "$DEPLOYER_SECRET")
 

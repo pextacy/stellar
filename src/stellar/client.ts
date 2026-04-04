@@ -56,8 +56,30 @@ export class StellarClient {
     return usdcBalance ? usdcBalance.balance : '0';
   }
 
+  private async retryOnTransient<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    const transientStatuses = new Set([429, 502, 503, 504]);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (!status || !transientStatuses.has(status)) {
+          throw err;
+        }
+        const backoffMs = 1500 * 2 ** attempt;
+        console.error(`[stellar] ${label} transient ${status}, retry in ${backoffMs}ms`);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+    }
+    throw lastErr;
+  }
+
   async sendPayment(params: PaymentParams): Promise<PaymentResult> {
-    const account = await this.server.loadAccount(this.publicKey);
+    const account = await this.retryOnTransient('loadAccount', () =>
+      this.server.loadAccount(this.publicKey),
+    );
 
     const builder = new StellarSdk.TransactionBuilder(account, {
       fee: StellarSdk.BASE_FEE,
@@ -70,7 +92,7 @@ export class StellarClient {
           amount: params.amount,
         }),
       )
-      .setTimeout(30);
+      .setTimeout(180);
 
     if (params.memo) {
       builder.addMemo(StellarSdk.Memo.text(params.memo));
@@ -79,12 +101,46 @@ export class StellarClient {
     const tx = builder.build();
     tx.sign(this.keypair);
 
-    const response = await this.server.submitTransaction(tx);
-    return {
-      txHash: response.hash,
-      ledger: response.ledger,
-      fee: 'fee_charged' in response ? String(response.fee_charged) : StellarSdk.BASE_FEE,
-    };
+    // Submit async — returns immediately with the hash and status, avoiding
+    // Horizon's synchronous submission timeout (the 504 path).
+    const submitResponse = await this.retryOnTransient('submit_async', () =>
+      this.server.submitAsyncTransaction(tx),
+    );
+
+    if (submitResponse.tx_status === 'ERROR') {
+      throw new Error(
+        `Payment to ${params.destination} rejected by core: ${submitResponse.error_result_xdr ?? 'unknown'}`,
+      );
+    }
+
+    // Poll Horizon until the tx is indexed (max 120s).
+    const hash = submitResponse.hash;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        const record = await this.server.transactions().transaction(hash).call();
+        if (record.successful) {
+          return {
+            txHash: record.hash,
+            ledger: record.ledger_attr,
+            fee: String(record.fee_charged),
+          };
+        }
+        throw new Error(`Payment ${hash} applied but not successful`);
+      } catch (err) {
+        // Treat 404 / NotFound as "still indexing" — keep polling.
+        const maybe = err as { name?: string; response?: { status?: number }; message?: string };
+        const isNotFound =
+          maybe.name === 'NotFoundError' ||
+          maybe.response?.status === 404 ||
+          (typeof maybe.message === 'string' && maybe.message.toLowerCase().includes('not found'));
+        if (!isNotFound) {
+          throw err;
+        }
+      }
+    }
+
+    throw new Error(`Payment ${hash} to ${params.destination} not indexed after 120s`);
   }
 
   async verifyPayment(

@@ -2,6 +2,7 @@ node_modules/
 dist/
 target/
 .env
+.testnet-keys.env
 *.db
 *.db-wal
 *.db-shm

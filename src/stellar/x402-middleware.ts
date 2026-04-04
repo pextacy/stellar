@@ -121,8 +121,9 @@ export class X402Middleware {
         );
       }
 
-      // Fire-and-forget reputation update
-      this.reputationRegistry
+      // Reputation update — awaited so the coordinator account's sequence
+      // is committed before the next agent payment races for the same seq.
+      await this.reputationRegistry
         .record(ctx.agentStellarAddress, latencyMs, response.status === 200)
         .catch(() => {});
 
@@ -136,8 +137,8 @@ export class X402Middleware {
     } catch (err) {
       const latencyMs = Date.now() - startTime;
 
-      // Fire-and-forget failed reputation update
-      this.reputationRegistry
+      // Reputation update — awaited to keep sequence state consistent.
+      await this.reputationRegistry
         .record(ctx.agentStellarAddress, latencyMs, false)
         .catch(() => {});
 

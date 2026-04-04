@@ -118,17 +118,17 @@ export class SpendingPolicyClient {
       throw new Error(`Contract call ${method} failed: ${JSON.stringify(response)}`);
     }
 
-    // Poll for completion (max 30s)
+    // Poll for completion (max 90s — testnet RPC can lag)
     let getResponse = await server.getTransaction(response.hash);
     let attempts = 0;
-    while (getResponse.status === 'NOT_FOUND' && attempts < 30) {
+    while (getResponse.status === 'NOT_FOUND' && attempts < 90) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       getResponse = await server.getTransaction(response.hash);
       attempts++;
     }
 
     if (getResponse.status === 'NOT_FOUND') {
-      throw new Error(`Contract call ${method} timed out after 30s`);
+      throw new Error(`Contract call ${method} timed out after 90s`);
     }
     if (getResponse.status === 'FAILED') {
       throw new Error(`Contract call ${method} failed on-chain`);

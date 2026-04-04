@@ -170,7 +170,7 @@ async function meshRun(task: string, budgetUsdc: string, local: boolean): Promis
     name: 'agentmesh',
     task,
     stages,
-    sessionId: `mesh-${Date.now()}`,
+    sessionId: `mesh_${Date.now()}`,
   });
 
   console.log();
